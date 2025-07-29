@@ -47,10 +47,23 @@ class ARQVApp {
             anchor.addEventListener('click', function (e) {
                 e.preventDefault();
                 const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
+                        console.log('✅ Service Worker registered successfully');
+                        
+                        // Check for updates
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // New version available
+                                    if (window.app) {
+                                        window.app.showInfo('Nova versão disponível! Recarregue a página para atualizar.');
+                                    }
+                                }
+                            });
+                        });
                     target.scrollIntoView({
                         behavior: 'smooth',
-                        block: 'start'
+                        console.warn('⚠️ Service Worker registration failed:', registrationError);
                     });
                 }
             });
@@ -118,6 +131,8 @@ class ARQVApp {
                 queryInput.style.fontStyle = 'normal';
                 queryInput.style.opacity = '1';
             });
+        } else {
+            console.warn('⚠️ Service Worker not supported in this browser');
         }
     }
 

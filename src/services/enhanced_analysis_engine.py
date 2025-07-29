@@ -12,7 +12,7 @@ import json
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from services.ai_manager import ai_manager
-from services.search_manager import search_manager
+from services.production_search_manager import production_search_manager
 from services.content_extractor import content_extractor
 from services.ultra_detailed_analysis_engine import ultra_detailed_analysis_engine
 from services.mental_drivers_architect import mental_drivers_architect
@@ -28,7 +28,7 @@ class EnhancedAnalysisEngine:
         self.max_analysis_time = 1800  # 30 minutos
         self.systems_enabled = {
             'ai_manager': bool(ai_manager),
-            'search_manager': bool(search_manager),
+            'search_manager': bool(production_search_manager),
             'content_extractor': bool(content_extractor)
         }
         
@@ -117,7 +117,7 @@ class EnhancedAnalysisEngine:
             logger.info("🌐 Executando pesquisa web com múltiplos provedores...")
             try:
                 # Busca com múltiplos provedores
-                search_results = search_manager.multi_search(data['query'], max_results_per_provider=8)
+                search_results = production_search_manager.search_with_fallback(data['query'], max_results=20)
                 research_data["search_results"] = search_results
                 
                 # Extrai conteúdo das páginas encontradas
@@ -150,7 +150,7 @@ class EnhancedAnalysisEngine:
                 ]
                 
                 for query in contextual_queries:
-                    context_results = search_manager.search(query, max_results=5)
+                    context_results = production_search_manager.search_with_fallback(query, max_results=5)
                     research_data["search_results"].extend(context_results)
                     
                     # Extrai conteúdo adicional
@@ -555,7 +555,7 @@ CRÍTICO: Use APENAS dados REAIS da pesquisa fornecida. NUNCA invente ou simule 
         # Adiciona status dos sistemas utilizados
         consolidated["sistemas_utilizados"] = {
             "ai_providers": ai_manager.get_provider_status(),
-            "search_providers": search_manager.get_provider_status(),
+            "search_providers": production_search_manager.get_provider_status(),
             "content_extraction": bool(research_data.get("extracted_content")),
             "total_sources": len(research_data.get("sources", [])),
             "analysis_quality": "premium_real_data"
@@ -600,7 +600,7 @@ CRÍTICO: Use APENAS dados REAIS da pesquisa fornecida. NUNCA invente ou simule 
         
         # Insights sobre sistemas de fallback utilizados
         ai_status = ai_manager.get_provider_status()
-        search_status = search_manager.get_provider_status()
+        search_status = production_search_manager.get_provider_status()
         
         available_ai = len([p for p in ai_status.values() if p['available']])
         available_search = len([p for p in search_status.values() if p['available']])

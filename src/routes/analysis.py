@@ -13,7 +13,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify, session
 from services.enhanced_analysis_engine import enhanced_analysis_engine
 from services.ai_manager import ai_manager
-from services.search_manager import search_manager
+from services.production_search_manager import production_search_manager
 from services.attachment_service import attachment_service
 from database import db_manager
 
@@ -145,7 +145,7 @@ def get_analysis_status():
         ai_status = ai_manager.get_provider_status()
         
         # Status dos provedores de busca
-        search_status = search_manager.get_provider_status()
+        search_status = production_search_manager.get_provider_status()
         
         # Status do banco de dados
         db_status = db_manager.test_connection()
@@ -211,12 +211,12 @@ def reset_providers():
             ai_manager.reset_provider_errors(provider_name)
             message = f"Reset erros do provedor de IA: {provider_name}" if provider_name else "Reset erros de todos os provedores de IA"
         elif provider_type == 'search':
-            search_manager.reset_provider_errors(provider_name)
+            production_search_manager.reset_provider_errors(provider_name)
             message = f"Reset erros do provedor de busca: {provider_name}" if provider_name else "Reset erros de todos os provedores de busca"
         else:
             # Reset todos
             ai_manager.reset_provider_errors()
-            search_manager.reset_provider_errors()
+            production_search_manager.reset_provider_errors()
             message = "Reset erros de todos os provedores"
         
         logger.info(f"🔄 {message}")
@@ -246,14 +246,14 @@ def test_search():
         logger.info(f"🧪 Testando busca: {query}")
         
         # Testa busca
-        results = search_manager.search(query, max_results)
+        results = production_search_manager.search_with_fallback(query, max_results)
         
         return jsonify({
             'success': True,
             'query': query,
             'results_count': len(results),
             'results': results,
-            'provider_status': search_manager.get_provider_status(),
+            'provider_status': production_search_manager.get_provider_status(),
             'timestamp': datetime.now().isoformat()
         })
         
@@ -385,7 +385,7 @@ def get_stats():
     try:
         db_stats = db_manager.get_stats()
         ai_status = ai_manager.get_provider_status()
-        search_status = search_manager.get_provider_status()
+        search_status = production_search_manager.get_provider_status()
         
         return jsonify({
             'database_stats': db_stats,
