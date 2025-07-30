@@ -9,6 +9,8 @@ import sys
 import locale
 import logging
 import chardet
+import codecs
+import os
 from typing import Union, Optional
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,21 @@ def setup_utf8_environment():
         if hasattr(sys, 'set_int_max_str_digits'):
             sys.set_int_max_str_digits(0)
         
+        # Força UTF-8 no Windows
+        if sys.platform.startswith('win'):
+            # Configura console para UTF-8
+            os.system('chcp 65001 >nul 2>&1')
+            
+            # Força encoding UTF-8 nos streams
+            if hasattr(sys.stdout, 'buffer'):
+                sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+            if hasattr(sys.stderr, 'buffer'):
+                sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+            
+            # Variáveis de ambiente para UTF-8
+            os.environ['PYTHONIOENCODING'] = 'utf-8'
+            os.environ['PYTHONUTF8'] = '1'
+        
         # Configura locale
         try:
             locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
@@ -29,7 +46,12 @@ def setup_utf8_environment():
                 locale.setlocale(locale.LC_ALL, 'C.UTF-8')
                 logger.info("✅ Locale configurado para C.UTF-8")
             except locale.Error:
-                logger.warning("⚠️ Não foi possível configurar locale UTF-8")
+                try:
+                    # Fallback para Windows
+                    locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
+                    logger.info("✅ Locale configurado para Portuguese_Brazil.1252")
+                except locale.Error:
+                    logger.warning("⚠️ Não foi possível configurar locale UTF-8")
         
         # Força encoding de saída
         if hasattr(sys.stdout, 'reconfigure'):
@@ -108,7 +130,27 @@ def clean_text_encoding(text: str) -> str:
         'Ã»': 'û',
         'Ã¼': 'ü',
         'Ã±': 'ñ',
-        'Ã¿': 'ÿ'
+        'Ã¿': 'ÿ',
+        # Correções específicas do Windows
+        'An├ílise': 'Análise',
+        'depend├¬ncias': 'dependências',
+        'cr├¡ticas': 'críticas',
+        'm├║ltiplas': 'múltiplas',
+        'concorr├¬ncia': 'concorrência',
+        'Gera├º├úo': 'Geração',
+        'relat├│rios': 'relatórios',
+        '­ƒöä': '🔄',
+        '­ƒº¬': '🧪',
+        '­ƒÜÇ': '🚀',
+        '­ƒîÉ': '🌐',
+        '­ƒôè': '📊',
+        '­ƒñû': '🤖',
+        '­ƒöì': '🔍',
+        '­ƒÆ¥': '💾',
+        'ÔÜí': '⚡',
+        'Ô£à': '✅',
+        '­ƒÆí': '💡',
+        '­ƒöº': '🔧'
     }
     
     # Aplica correções
@@ -221,5 +263,30 @@ def setup_utf8_logging(log_file: str = 'logs/arqv30.log'):
     
     logger.info("✅ Logging UTF-8 configurado")
 
+def fix_console_encoding():
+    """Corrige encoding do console especificamente"""
+    if sys.platform.startswith('win'):
+        try:
+            # Força codepage UTF-8 no Windows
+            import subprocess
+            subprocess.run(['chcp', '65001'], shell=True, capture_output=True)
+            
+            # Configura variáveis de ambiente
+            os.environ['PYTHONIOENCODING'] = 'utf-8'
+            os.environ['PYTHONUTF8'] = '1'
+            
+            # Reconfigura streams se possível
+            if hasattr(sys.stdout, 'reconfigure'):
+                sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+                sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+            
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao corrigir encoding do console: {e}")
+            return False
+    
+    return True
+
 # Configuração automática ao importar
 setup_utf8_environment()
+fix_console_encoding()

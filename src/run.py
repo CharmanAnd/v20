@@ -16,6 +16,12 @@ from dotenv import load_dotenv
 import traceback
 import signal
 import atexit
+import codecs
+from utils.encoding_utils import setup_utf8_environment, fix_console_encoding
+
+# Configura UTF-8 antes de tudo
+setup_utf8_environment()
+fix_console_encoding()
 
 # Carrega variáveis de ambiente
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env'))
@@ -33,11 +39,29 @@ except locale.Error:
 log_level = getattr(logging, os.getenv('LOG_LEVEL', 'INFO').upper())
 log_format = os.getenv('LOG_FORMAT', '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
+# Configuração de logging com UTF-8 forçado
+class UTF8StreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # Garante que a mensagem seja UTF-8
+            if isinstance(msg, bytes):
+                msg = msg.decode('utf-8', errors='replace')
+            # Força encoding UTF-8 na saída
+            if hasattr(self.stream, 'buffer'):
+                self.stream.buffer.write((msg + '\n').encode('utf-8'))
+                self.stream.buffer.flush()
+            else:
+                self.stream.write(msg + '\n')
+                self.stream.flush()
+        except Exception:
+            self.handleError(record)
+
 logging.basicConfig(
     level=log_level,
     format=log_format,
     handlers=[
-        logging.StreamHandler(sys.stdout),
+        UTF8StreamHandler(sys.stdout),
         logging.FileHandler('logs/arqv30.log', encoding='utf-8') if os.getenv('LOG_FILE_ENABLED', 'true').lower() == 'true' else logging.NullHandler()
     ]
 )
@@ -141,7 +165,11 @@ def create_app():
         """Retorna status detalhado dos serviços"""
         try:
             # Verifica serviços de produção
-            search_status = production_search_manager.get_provider_status()
+            try:
+                search_status = production_search_manager.get_provider_status()
+            except Exception as e:
+                logger.error(f"Erro ao obter status de busca: {e}")
+                search_status = {}
             
             # Conta provedores disponíveis
             available_search = len([p for p in search_status.values() if p['enabled']])
@@ -184,8 +212,15 @@ def create_app():
     def clear_cache():
         """Limpa todos os caches do sistema"""
         try:
-            production_search_manager.clear_cache()
-            production_content_extractor.clear_cache()
+            try:
+                production_search_manager.clear_cache()
+            except Exception as e:
+                logger.error(f"Erro ao limpar cache de busca: {e}")
+            
+            try:
+                production_content_extractor.clear_cache()
+            except Exception as e:
+                logger.error(f"Erro ao limpar cache de conteúdo: {e}")
             
             return jsonify({
                 'success': True,
@@ -207,7 +242,10 @@ def create_app():
             data = request.get_json() or {}
             provider_name = data.get('provider')
             
-            production_search_manager.reset_provider_errors(provider_name)
+            try:
+                production_search_manager.reset_provider_errors(provider_name)
+            except Exception as e:
+                logger.error(f"Erro ao resetar provedores de busca: {e}")
             
             message = f"Reset erros do provedor: {provider_name}" if provider_name else "Reset erros de todos os provedores"
             
@@ -268,8 +306,15 @@ def cleanup_on_exit():
     """Função de limpeza executada na saída"""
     logger.info("🧹 Executando limpeza final...")
     try:
-        production_search_manager.cache.cleanup_expired()
-        production_content_extractor.clear_cache()
+        try:
+            production_search_manager.cache.cleanup_expired()
+        except Exception as e:
+            logger.error(f"Erro na limpeza do cache de busca: {e}")
+        
+        try:
+            production_content_extractor.clear_cache()
+        except Exception as e:
+            logger.error(f"Erro na limpeza do cache de conteúdo: {e}")
     except Exception as e:
         logger.error(f"Erro na limpeza final: {e}")
 def main():
@@ -307,9 +352,13 @@ def main():
             logger.warning(f"⚠️ Configurações ausentes: {', '.join(missing_configs)}")
         
         # Log de provedores de busca
-        search_status = production_search_manager.get_provider_status()
-        enabled_providers = [name for name, status in search_status.items() if status['enabled']]
-        logger.info(f"🔍 Provedores de busca ativos: {', '.join(enabled_providers)}")
+        try:
+            search_status = production_search_manager.get_provider_status()
+            enabled_providers = [name for name, status in search_status.items() if status['enabled']]
+            logger.info(f"🔍 Provedores de busca ativos: {', '.join(enabled_providers)}")
+        except Exception as e:
+            logger.error(f"❌ Erro ao obter status dos provedores: {e}")
+            search_status = {}
         
         # Inicia o servidor
         if os.getenv('FLASK_ENV') == 'production':

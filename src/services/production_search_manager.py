@@ -309,9 +309,11 @@ class ProductionSearchManager:
     
     def _reset_provider_if_needed(self, provider: str):
         """Reabilita provedor se tempo de reset passou"""
+        quota_reset = self.providers[provider].get('quota_reset')
+        
         if (not self.providers[provider]['enabled'] and 
-            self.providers[provider]['quota_reset'] and
-            time.time() > self.providers[provider]['quota_reset']):
+            quota_reset is not None and
+            time.time() > quota_reset):
             
             logger.info(f"🔄 Reabilitando provedor {provider}")
             self.providers[provider]['enabled'] = True
@@ -339,16 +341,20 @@ class ProductionSearchManager:
                 self.providers[provider]['enabled'] = False
                 return []
             
-            # Valida chaves
-            if len(api_key) < 30 or not api_key.startswith('AIza'):
+            # Valida chaves com mais flexibilidade
+            if len(api_key) < 25:
                 logger.error("❌ GOOGLE_SEARCH_KEY parece inválida")
                 self.providers[provider]['enabled'] = False
                 return []
             
-            if ':' not in cse_id or len(cse_id) < 20:
+            if len(cse_id) < 15:
                 logger.error("❌ GOOGLE_CSE_ID parece inválido")
                 self.providers[provider]['enabled'] = False
                 return []
+            
+            # Log das chaves para debug (mascarado)
+            logger.info(f"🔑 Google API Key: {api_key[:10]}...{api_key[-5:]}")
+            logger.info(f"🔑 Google CSE ID: {cse_id[:10]}...{cse_id[-5:]}")
             
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
@@ -359,14 +365,14 @@ class ProductionSearchManager:
                 'lr': 'lang_pt',
                 'gl': 'br',
                 'safe': 'off',
-                'dateRestrict': 'm6',
-                'sort': 'date',
-                'fields': 'items(title,link,snippet,displayLink)'
+                'dateRestrict': 'm6'
             }
             
             headers = self._get_headers('google')
             
             self._record_request(provider)
+            
+            logger.info(f"🔍 Fazendo requisição Google API para: {query[:50]}...")
             
             response = requests.get(
                 url, 
@@ -380,19 +386,40 @@ class ProductionSearchManager:
             if response.status_code == 200:
                 data = response.json()
                 
+                # Log da resposta para debug
+                logger.info(f"📊 Google API retornou: {len(data.get('items', []))} items")
+                
                 # Verifica se há erro na resposta
                 if 'error' in data:
                     error_msg = data['error'].get('message', 'Erro desconhecido')
+                    error_code = data['error'].get('code', 'unknown')
                     logger.error(f"❌ Google API Error: {error_msg}")
+                    logger.error(f"❌ Google API Error Code: {error_code}")
                     
                     # Verifica se é erro de quota
                     if 'quota' in error_msg.lower() or 'limit' in error_msg.lower():
                         self.providers[provider]['quota_reset'] = time.time() + 86400  # 24h
                         self.providers[provider]['enabled'] = False
+                        logger.warning(f"⚠️ Google API quota/limit atingido - desabilitado por 24h")
+                    elif 'invalid' in error_msg.lower() or 'key' in error_msg.lower():
+                        logger.error("❌ Google API Key inválida - verifique configuração")
+                        self.providers[provider]['enabled'] = False
                     
+                    self.providers[provider]['quota_reset'] = time.time() + 86400  # 24h
+                    self.providers[provider]['enabled'] = False
+                    self.providers[provider]['enabled'] = False
                     return []
                 
                 items = data.get('items', [])
+                
+                if not items:
+                    logger.warning(f"⚠️ Google API retornou 0 resultados para: {query}")
+                    # Verifica se há informação sobre por que não há resultados
+                    if 'searchInformation' in data:
+                        search_info = data['searchInformation']
+                        total_results = search_info.get('totalResults', '0')
+                        logger.info(f"📊 Total de resultados disponíveis: {total_results}")
+                
                 results = []
                 
                 for item in items:
@@ -632,45 +659,58 @@ class ProductionSearchManager:
                 return []
         
         try:
-            # DuckDuckGo requer abordagem em duas etapas
-            # 1. Primeira requisição para obter token
-            session = requests.Session()
-            session.headers.update(self._get_headers('duckduckgo'))
-            
-            # Delay anti-detecção
-            time.sleep(random.uniform(1.5, 3.0))
-            
-            # Primeira requisição
-            initial_url = "https://duckduckgo.com/"
-            session.get(initial_url, timeout=self.request_timeout)
-            
-            # Segunda requisição com busca
+            # Abordagem simplificada e mais robusta para DuckDuckGo
             search_url = "https://html.duckduckgo.com/html/"
             params = {
                 'q': query,
-                'b': '',
                 'kl': 'br-pt',
-                'df': 'm'
+                's': '0',
+                'dc': '1',
+                'v': 'l',
+                'o': 'json',
+                'api': '/d.js'
             }
+            
+            headers = self._get_headers('duckduckgo')
+            # Headers específicos para DuckDuckGo
+            headers.update({
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'pt-BR,pt;q=0.8,en-US;q=0.5,en;q=0.3',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://duckduckgo.com/',
+                'Origin': 'https://duckduckgo.com',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+                'Pragma': 'no-cache',
+                'Cache-Control': 'no-cache'
+            })
+            
+            # Delay anti-detecção
+            time.sleep(random.uniform(2.0, 4.0))
             
             self._record_request(provider)
             
-            response = session.get(
+            response = requests.get(
                 search_url,
                 params=params,
+                headers=headers,
                 timeout=self.request_timeout
             )
+            
+            logger.info(f"🦆 DuckDuckGo Response: {response.status_code}")
             
             if response.status_code == 200:
                 soup = BeautifulSoup(response.content, 'html.parser')
                 results = []
                 
-                # Múltiplos seletores para robustez
+                # Seletores atualizados para DuckDuckGo
                 result_selectors = [
-                    '.result',
+                    'div.web-result',
+                    'div.result',
                     'div[class*="result"]',
-                    '.web-result',
-                    '.results_links'
+                    '.results_links',
+                    'div.links_main'
                 ]
                 
                 result_items = []
@@ -678,17 +718,18 @@ class ProductionSearchManager:
                     items = soup.select(selector)
                     if items:
                         result_items = items
+                        logger.info(f"🔍 DuckDuckGo usando seletor: {selector}")
                         break
                 
                 logger.info(f"🔍 DuckDuckGo encontrou {len(result_items)} elementos")
                 
                 for item in result_items[:max_results]:
                     try:
-                        # Múltiplos seletores para título e URL
-                        title_elem = (item.select_one('.result__a') or
-                                    item.select_one('a.result__title') or
-                                    item.select_one('h2 a') or
-                                    item.select_one('a[href*="uddg"]'))
+                        # Seletores atualizados para título e URL
+                        title_elem = (item.select_one('a.result__a') or
+                                    item.select_one('h2.result__title a') or
+                                    item.select_one('.result__title a') or
+                                    item.select_one('a[href]'))
                         
                         if not title_elem:
                             continue
@@ -696,23 +737,32 @@ class ProductionSearchManager:
                         title = title_elem.get_text(strip=True)
                         url = title_elem.get('href', '')
                         
-                        # DuckDuckGo usa URLs redirecionadas
-                        if url.startswith('/l/?uddg='):
-                            # Extrai URL real do parâmetro
+                        # Processa URLs do DuckDuckGo
+                        if url.startswith('/l/?uddg=') or url.startswith('//duckduckgo.com/l/?uddg='):
                             import urllib.parse
-                            parsed = urllib.parse.parse_qs(url.split('?')[1])
-                            if 'uddg' in parsed:
-                                url = urllib.parse.unquote(parsed['uddg'][0])
+                            try:
+                                if '?' in url:
+                                    query_part = url.split('?')[1]
+                                    parsed = urllib.parse.parse_qs(query_part)
+                                    if 'uddg' in parsed:
+                                        url = urllib.parse.unquote(parsed['uddg'][0])
+                            except Exception as e:
+                                logger.debug(f"Erro ao processar URL DuckDuckGo: {e}")
+                                continue
                         
                         # Snippet
-                        snippet_elem = (item.select_one('.result__snippet') or
+                        snippet_elem = (item.select_one('a.result__snippet') or
+                                      item.select_one('.result__snippet') or
                                       item.select_one('.snippet') or
-                                      item.select_one('p'))
+                                      item.select_one('span.result__snippet'))
                         
                         snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
                         
                         # Valida URL
-                        if url and title and url.startswith('http'):
+                        if url and title and (url.startswith('http') or url.startswith('//')):
+                            if url.startswith('//'):
+                                url = 'https:' + url
+                                
                             result = SearchResult(
                                 title=title,
                                 url=url,
@@ -731,9 +781,15 @@ class ProductionSearchManager:
             elif response.status_code == 202:
                 logger.warning("⚠️ DuckDuckGo: Busca em processamento (202)")
                 return []
+            elif response.status_code == 429:
+                logger.warning("⚠️ DuckDuckGo: Rate limit detectado")
+                self.providers[provider]['quota_reset'] = time.time() + 1800  # 30 min
+                return []
                 
             else:
                 logger.warning(f"⚠️ DuckDuckGo retornou status {response.status_code}")
+                if response.status_code >= 400:
+                    logger.debug(f"DuckDuckGo response content: {response.text[:500]}")
                 return []
                 
         except Exception as e:
@@ -827,12 +883,17 @@ class ProductionSearchManager:
         status = {}
         
         for name, config in self.providers.items():
+            # Garante que quota_reset seja um número ou 0
+            quota_reset = config.get('quota_reset')
+            if quota_reset is None:
+                quota_reset = 0
+            
             status[name] = {
                 'enabled': config['enabled'],
                 'priority': config['priority'],
                 'error_count': config['error_count'],
                 'last_error': config.get('last_error'),
-                'rate_limited': config.get('quota_reset', 0) > time.time(),
+                'rate_limited': quota_reset > time.time(),
                 'requests_today': len(self.rate_limiter.get(name, [])),
                 'rate_limit': config['rate_limit']
             }
